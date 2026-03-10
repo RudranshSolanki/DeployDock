@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Deployed project files (user uploads)
+projects/
+uploads/
+
+# Persistent data (generated at runtime)
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
