@@ -41,6 +41,14 @@
             <span class="status-dot"></span>
             <span>Connected</span>
           </div>
+          <button class="btn btn-ghost" onclick="window.createNewFolder()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              <line x1="12" y1="11" x2="12" y2="17"></line>
+              <line x1="9" y1="14" x2="15" y2="14"></line>
+            </svg>
+            New Folder
+          </button>
           <button class="btn btn-primary" id="upload-btn" onclick="openUploadModal()">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M8 2V14M2 8H14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
@@ -139,8 +147,8 @@
         </button>
       </div>
 
-      <!-- Projects Grid -->
-      <div class="projects-grid" id="projects-grid"></div>
+      <!-- Projects Container -->
+      <div class="projects-container" id="projects-container"></div>
     </main>
 
     <!-- Upload Modal -->
@@ -236,9 +244,19 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body">
-          <div class="log-container" id="log-container">
+        <div class="modal-body" style="display: flex; flex-direction: column;">
+          <div class="log-container" id="log-container"
+            style="flex: 1; border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0;">
             <div class="log-entries" id="log-entries"></div>
+          </div>
+          <div class="terminal-input-container"
+            style="display: flex; background: #0a0a0a; border: 1px solid var(--border-color); border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; padding: 8px 16px; align-items: center;">
+            <span
+              style="color: var(--success); margin-right: 8px; font-family: 'Fira Code', monospace; font-weight: bold;">$</span>
+            <input type="text" id="terminal-input"
+              placeholder="Type command to send to process (e.g. 'rs', 'y', etc)..."
+              style="flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: 'Fira Code', monospace; font-size: 14px; outline: none; padding: 4px;"
+              onkeypress="window.handleTerminalInput(event)">
           </div>
         </div>
         <div class="modal-footer">

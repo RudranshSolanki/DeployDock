@@ -4,7 +4,27 @@ export async function fetchProjects() {
     const res = await fetch(`${API_BASE}/projects`);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to fetch projects');
-    return data.projects;
+    return data;
+}
+
+export async function createFolder(name) {
+    const res = await fetch(`${API_BASE}/projects/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to create folder');
+    return data;
+}
+
+export async function deleteFolder(name) {
+    const res = await fetch(`${API_BASE}/projects/folders/${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to delete folder');
+    return data;
 }
 
 export async function fetchProject(id) {
@@ -62,6 +82,17 @@ export async function deleteProject(id) {
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Delete failed');
     return data;
+}
+
+export async function updateProjectFolder(id, folder) {
+    const res = await fetch(`${API_BASE}/projects/${id}/folder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to update folder');
+    return data.project;
 }
 
 export async function fetchLogs(id) {

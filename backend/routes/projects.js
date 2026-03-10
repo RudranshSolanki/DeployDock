@@ -84,6 +84,17 @@ router.post('/:id/restart', async (req, res) => {
     }
 });
 
+// Update project folder
+router.patch('/:id/folder', express.json(), (req, res) => {
+    try {
+        const { folder } = req.body;
+        const project = projectManager.updateProjectFolder(req.params.id, folder);
+        res.json({ success: true, message: 'Folder updated', project });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Delete a project
 router.delete('/:id', (req, res) => {
     try {
@@ -94,11 +105,34 @@ router.delete('/:id', (req, res) => {
     }
 });
 
-// Get all projects
+// Get all projects and folders
 router.get('/', (req, res) => {
     try {
         const projects = projectManager.getAllProjects();
-        res.json({ success: true, projects });
+        const folders = projectManager.getFolders();
+        res.json({ success: true, projects, folders });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Create a new explicit folder
+router.post('/folders', express.json(), (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) return res.status(400).json({ error: 'Folder name required' });
+        projectManager.createFolder(name);
+        res.json({ success: true, message: 'Folder created successfully', folder: name });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete a folder explicitly
+router.delete('/folders/:name', (req, res) => {
+    try {
+        projectManager.deleteFolder(req.params.name);
+        res.json({ success: true, message: 'Folder deleted successfully' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

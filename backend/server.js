@@ -77,6 +77,10 @@ wss.on('connection', (ws) => {
             if (msg.type === 'unsubscribe' && msg.projectId) {
                 clients.get(ws).delete(msg.projectId);
             }
+
+            if (msg.type === 'stdin' && msg.projectId && msg.data) {
+                processManager.sendInput(msg.projectId, msg.data);
+            }
         } catch (e) { /* ignore invalid messages */ }
     });
 

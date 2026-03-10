@@ -9,8 +9,10 @@ const proxyManager = require('./proxyManager');
 class ProjectManager {
     constructor() {
         this.projects = new Map();
+        this.folders = new Set();
         this.projectsDir = path.join(__dirname, '..', 'projects');
         this.dataFile = path.join(__dirname, '..', 'data', 'projects.json');
+        this.foldersFile = path.join(__dirname, '..', 'data', 'folders.json');
 
         // Ensure directories exist
         if (!fs.existsSync(this.projectsDir)) {
@@ -23,6 +25,7 @@ class ProjectManager {
 
         // Load existing projects from disk
         this._loadProjects();
+        this._loadFolders();
     }
 
     /**
@@ -103,6 +106,7 @@ class ProjectManager {
             status: 'extracted',
             createdAt: new Date().toISOString(),
             env: config.env || {},
+            folder: config.folder || '',
         };
 
         this.projects.set(projectId, project);
@@ -309,6 +313,49 @@ class ProjectManager {
     }
 
     /**
+     * Update project folder
+     */
+    updateProjectFolder(projectId, folderName) {
+        const project = this.projects.get(projectId);
+        if (!project) throw new Error('Project not found');
+
+        project.folder = folderName || '';
+        if (folderName) {
+            this.createFolder(folderName);
+        }
+        this._saveProjects();
+        return project;
+    }
+
+    /**
+     * Folder Management
+     */
+    createFolder(name) {
+        if (!name) return;
+        this.folders.add(name);
+        this._saveFolders();
+    }
+
+    deleteFolder(name) {
+        if (this.folders.has(name)) {
+            this.folders.delete(name);
+            this._saveFolders();
+
+            // Un-categorize projects in this folder
+            for (const [id, project] of this.projects.entries()) {
+                if (project.folder === name) {
+                    project.folder = '';
+                }
+            }
+            this._saveProjects();
+        }
+    }
+
+    getFolders() {
+        return Array.from(this.folders);
+    }
+
+    /**
      * Get all projects
      */
     getAllProjects() {
@@ -377,9 +424,38 @@ class ProjectManager {
                     }
                 }
             } catch (e) {
-                console.error('Failed to load projects:', e.message);
+                console.error('Failed to load projects.json:', e);
             }
         }
+    }
+
+    _loadFolders() {
+        if (fs.existsSync(this.foldersFile)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(this.foldersFile, 'utf8'));
+                if (Array.isArray(data)) {
+                    this.folders = new Set(data);
+                }
+            } catch (e) {
+                console.error('Failed to load folders.json:', e);
+            }
+        }
+
+        // Auto-add any folders that exist in projects but not in folders set
+        let added = false;
+        for (const [id, project] of this.projects.entries()) {
+            if (project.folder && !this.folders.has(project.folder)) {
+                this.folders.add(project.folder);
+                added = true;
+            }
+        }
+        if (added) {
+            this._saveFolders();
+        }
+    }
+
+    _saveFolders() {
+        fs.writeFileSync(this.foldersFile, JSON.stringify(Array.from(this.folders), null, 2));
     }
 }
 

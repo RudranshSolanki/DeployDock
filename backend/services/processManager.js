@@ -23,7 +23,6 @@ class ProcessManager extends EventEmitter {
             const proc = spawn(isWindows ? 'cmd' : cmd, isWindows ? ['/c', installCommand] : args, {
                 cwd: projectPath,
                 env: { ...process.env, ...env },
-                shell: true,
             });
 
             proc.stdout.on('data', (data) => {
@@ -83,7 +82,6 @@ class ProcessManager extends EventEmitter {
         const proc = spawn(isWindows ? 'cmd' : 'sh', isWindows ? ['/c', finalCommand] : ['-c', finalCommand], {
             cwd: projectPath,
             env: processEnv,
-            shell: true,
         });
 
         const processInfo = {
@@ -135,6 +133,26 @@ class ProcessManager extends EventEmitter {
         }, 10000);
 
         return proc;
+    }
+
+    /**
+     * Send input (stdin) to a running project process
+     */
+    sendInput(projectId, input) {
+        const info = this.processes.get(projectId);
+        if (info && info.process && info.process.stdin) {
+            try {
+                // Ensure there is a newline if the command needs to execute
+                const command = input.endsWith('\n') ? input : input + '\n';
+                info.process.stdin.write(command);
+                this._addLog(projectId, `> ${input}`);
+                return true;
+            } catch (err) {
+                this._addLog(projectId, `Failed to send input: ${err.message}`);
+                return false;
+            }
+        }
+        return false;
     }
 
     /**

@@ -96,9 +96,10 @@ function renderProjectDetails() {
         document.getElementById('qrcode').innerHTML = '<p style="color:var(--text-muted);text-align:center;">No LAN connectivity</p>';
     }
 
-    // Initialize Editor
+    // Initialize Editor and Logs
     setTimeout(() => {
         initEditor();
+        connectWebSocket();
     }, 100);
 }
 
@@ -324,3 +325,142 @@ async function openFile(path, name) {
         editorEl.style.opacity = '1';
     }
 }
+
+// --- Live Logs Logic ---
+
+let ws = null;
+let reconnectInterval = null;
+
+function connectWebSocket() {
+    if (ws) return; // already connected
+
+    try {
+        ws = api.createWebSocket();
+
+        ws.onopen = () => {
+            if (project && project.id) {
+                ws.send(JSON.stringify({ type: 'subscribe', projectId: project.id }));
+            }
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === 'log' && msg.projectId === project.id) {
+                    appendLogEntry(msg.log);
+                }
+
+                if (msg.type === 'logs_history' && msg.projectId === project.id) {
+                    renderLogEntries(msg.logs);
+                }
+
+                if (msg.type === 'status' && msg.projectId === project.id) {
+                    project.status = msg.status;
+                    const statusBadge = document.getElementById('project-status');
+                    const statusText = document.getElementById('project-status-text');
+                    if (statusBadge && statusText) {
+                        statusBadge.className = `project-status ${msg.status}`;
+                        statusText.textContent = msg.status;
+                    }
+                }
+            } catch (e) { /* ignore */ }
+        };
+
+        ws.onclose = () => {
+            ws = null;
+            if (!reconnectInterval) {
+                reconnectInterval = setTimeout(() => {
+                    reconnectInterval = null;
+                    connectWebSocket();
+                }, 3000);
+            }
+        };
+    } catch (e) {
+        console.error('WebSocket connection failed:', e);
+    }
+}
+
+function renderLogEntries(logs) {
+    const container = document.getElementById('project-log-entries');
+    if (!container) return;
+    container.innerHTML = logs.map(createLogEntryHtml).join('');
+    autoScrollLogs();
+}
+
+function appendLogEntry(log) {
+    const container = document.getElementById('project-log-entries');
+    if (!container) return;
+
+    // remove "connecting" text if it's the first log
+    if (container.innerHTML.includes('Connecting to log stream')) {
+        container.innerHTML = '';
+    }
+
+    container.insertAdjacentHTML('beforeend', createLogEntryHtml(log));
+    autoScrollLogs();
+}
+
+function createLogEntryHtml(log) {
+    const time = new Date(log.timestamp).toLocaleTimeString('en-US', { hour12: false });
+    let msgClass = '';
+    if (log.message.includes('❌') || log.message.includes('error') || log.message.includes('Error')) {
+        msgClass = 'color: #ef4444;'; // error red
+    } else if (log.message.includes('✅') || log.message.includes('success')) {
+        msgClass = 'color: #22c55e;'; // success green
+    } else if (log.message.includes('⚠️') || log.message.includes('warn')) {
+        msgClass = 'color: #f59e0b;'; // warning yellow
+    } else {
+        msgClass = 'color: #a1a1aa;'; // normal text
+    }
+
+    return `
+      <div style="margin-bottom: 4px; display: flex; gap: 12px; word-break: break-all;">
+        <span style="color: #52525b; flex-shrink: 0;">[${time}]</span>
+        <span style="${msgClass}">${escapeHtml(log.message)}</span>
+      </div>
+    `;
+}
+
+function autoScrollLogs() {
+    const autoScroll = document.getElementById('auto-scroll-logs');
+    if (autoScroll && autoScroll.checked) {
+        const container = document.getElementById('project-log-container');
+        if (container) {
+            container.scrollTop = container.scrollHeight;
+        }
+    }
+}
+
+window.clearLogs = function () {
+    const container = document.getElementById('project-log-entries');
+    if (container) container.innerHTML = '';
+};
+
+window.handleTerminalInput = function (event) {
+    const inputMap = event.target;
+
+    // Support Ctrl+C mapping to emulate terminal kill
+    if (event.ctrlKey && event.key === 'c') {
+        event.preventDefault();
+        inputMap.value = '';
+        if (project && project.id) {
+            handleStop(); // Leverage existing handleStop method on this page
+        }
+        return;
+    }
+
+    if (event.key === 'Enter') {
+        const val = inputMap.value;
+        if (!val || !project || !project.id) return;
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'stdin',
+                projectId: project.id,
+                data: val
+            }));
+        }
+        inputMap.value = '';
+    }
+};
