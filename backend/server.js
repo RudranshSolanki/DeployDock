@@ -81,6 +81,14 @@ wss.on('connection', (ws) => {
             if (msg.type === 'stdin' && msg.projectId && msg.data) {
                 processManager.sendInput(msg.projectId, msg.data);
             }
+
+            // Restricted terminal: run a command in the project directory
+            if (msg.type === 'run-command' && msg.projectId && msg.command) {
+                const project = projectManager.getProject(msg.projectId);
+                if (project && project.path) {
+                    processManager.runProjectCommand(msg.projectId, project.path, msg.command);
+                }
+            }
         } catch (e) { /* ignore invalid messages */ }
     });
 
@@ -95,6 +103,22 @@ processManager.on('log', ({ projectId, log }) => {
         type: 'log',
         projectId,
         log,
+    });
+
+    for (const [ws, subscriptions] of clients.entries()) {
+        if (subscriptions.has(projectId) || subscriptions.has('*')) {
+            try {
+                ws.send(message);
+            } catch (e) { /* client disconnected */ }
+        }
+    }
+});
+
+processManager.on('cmd-data', ({ projectId, data }) => {
+    const message = JSON.stringify({
+        type: 'cmd-data',
+        projectId,
+        data,
     });
 
     for (const [ws, subscriptions] of clients.entries()) {

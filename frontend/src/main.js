@@ -57,6 +57,10 @@ function connectWebSocket() {
           renderLogEntries(msg.logs);
         }
 
+        if (msg.type === 'cmd-data' && msg.projectId === currentLogProjectId) {
+          appendTerminalOutput(msg.data);
+        }
+
         if (msg.type === 'status') {
           updateProjectStatus(msg.projectId, msg.status);
         }
@@ -249,7 +253,6 @@ function renderProjectCards(projectsList) {
   return projectsList.map((project, index) => {
     const statusClass = project.status || 'unknown';
     const portChanged = project.desiredPort !== project.assignedPort;
-    const lastLogs = (project.logs || []).slice(-3);
     const cleanedName = escapeHtml((project.name || '').toLowerCase().replace(/[^a-z0-9-]/g, '-'));
 
     return `
@@ -310,11 +313,10 @@ function renderProjectCards(projectsList) {
                 </div>
               </div>
             </details>
-            ${lastLogs.length > 0 ? `
-              <div class="card-minilog" onclick="window.openLogModal('${project.id}', '${escapeHtml(project.name)}')">
-                ${lastLogs.map(l => escapeHtml(l.message)).join('<br>')}
-              </div>
-            ` : ''}
+            <div class="card-minilog" onclick="window.openLogModal('${project.id}', '${escapeHtml(project.name)}')" style="cursor:pointer; display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 0.8rem; color: var(--text-muted);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+              Open Terminal
+            </div>
             <div class="card-actions">
               ${project.status === 'extracted' ? `
                 <button class="btn btn-success btn-sm" onclick="window.handleDeploy('${project.id}')">
@@ -675,24 +677,56 @@ window.handleMoveToFolder = async function (id) {
 };
 
 // ===========================
-//  Log Modal
+//  Log Modal (Tabbed: Logs + Terminal)
 // ===========================
+
+window.switchModalTab = function (tab) {
+  const tabLogs = document.getElementById('tab-logs');
+  const tabTerminal = document.getElementById('tab-terminal');
+  const panelLogs = document.getElementById('panel-logs');
+  const panelTerminal = document.getElementById('panel-terminal');
+
+  if (tab === 'logs') {
+    tabLogs.style.color = 'var(--text-primary)';
+    tabLogs.style.fontWeight = '600';
+    tabLogs.style.borderBottom = '2px solid var(--accent-primary)';
+    tabTerminal.style.color = 'var(--text-muted)';
+    tabTerminal.style.fontWeight = '500';
+    tabTerminal.style.borderBottom = '2px solid transparent';
+    panelLogs.style.display = 'flex';
+    panelTerminal.style.display = 'none';
+  } else {
+    tabTerminal.style.color = 'var(--text-primary)';
+    tabTerminal.style.fontWeight = '600';
+    tabTerminal.style.borderBottom = '2px solid var(--accent-primary)';
+    tabLogs.style.color = 'var(--text-muted)';
+    tabLogs.style.fontWeight = '500';
+    tabLogs.style.borderBottom = '2px solid transparent';
+    panelLogs.style.display = 'none';
+    panelTerminal.style.display = 'flex';
+    setTimeout(() => document.getElementById('terminal-cmd-input')?.focus(), 50);
+  }
+};
+
 window.openLogModal = function (projectId, name) {
   currentLogProjectId = projectId;
-  document.getElementById('log-modal-project-name').textContent = name + ' — Logs';
+  document.getElementById('log-modal-project-name').textContent = name;
   document.getElementById('log-entries').innerHTML = '';
-  document.getElementById('terminal-input').value = '';
   document.getElementById('log-modal').classList.add('active');
-  setTimeout(() => document.getElementById('terminal-input').focus(), 100);
+
+  // Default to logs tab
+  window.switchModalTab('logs');
 
   // Subscribe to this project's logs via WebSocket
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'subscribe', projectId }));
   }
 
-  // Also fetch existing logs via REST
+  // Fetch existing logs via REST
   api.fetchLogs(projectId).then(logs => {
-    renderLogEntries(logs);
+    if (Array.isArray(logs)) {
+      renderLogEntries(logs);
+    }
   }).catch(() => { });
 };
 
@@ -704,42 +738,17 @@ window.closeLogModal = function () {
   document.getElementById('log-modal').classList.remove('active');
 };
 
-window.handleTerminalInput = function (event) {
-  const inputMap = event.target;
-
-  // Handle literal Ctrl+C keybind specifically mapped to stop process
-  if (event.ctrlKey && event.key === 'c') {
-    event.preventDefault();
-    inputMap.value = '';
-    if (currentLogProjectId) {
-      window.handleStop(currentLogProjectId);
-    }
-    return;
-  }
-
-  if (event.key === 'Enter') {
-    const val = inputMap.value;
-    if (!val || !currentLogProjectId) return;
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'stdin',
-        projectId: currentLogProjectId,
-        data: val
-      }));
-    }
-    inputMap.value = '';
-  }
-};
-
+// --- Logs Tab ---
 function renderLogEntries(logs) {
   const container = document.getElementById('log-entries');
+  if (!container) return;
   container.innerHTML = logs.map(log => createLogEntryHtml(log)).join('');
   autoScrollLogs();
 }
 
 function appendLogEntry(log) {
   const container = document.getElementById('log-entries');
+  if (!container) return;
   container.insertAdjacentHTML('beforeend', createLogEntryHtml(log));
   autoScrollLogs();
 }
@@ -747,14 +756,13 @@ function appendLogEntry(log) {
 function createLogEntryHtml(log) {
   const time = new Date(log.timestamp).toLocaleTimeString('en-US', { hour12: false });
   let msgClass = '';
-  if (log.message.includes('❌') || log.message.includes('error') || log.message.includes('Error')) {
+  if (log.message.includes('❌') || log.message.toLowerCase().includes('error')) {
     msgClass = 'error-log';
-  } else if (log.message.includes('✅') || log.message.includes('success')) {
+  } else if (log.message.includes('✅') || log.message.toLowerCase().includes('success')) {
     msgClass = 'success-log';
-  } else if (log.message.includes('⚠️') || log.message.includes('warn')) {
+  } else if (log.message.includes('⚠️') || log.message.toLowerCase().includes('warn')) {
     msgClass = 'warning-log';
   }
-
   return `
     <div class="log-entry">
       <span class="log-timestamp">${time}</span>
@@ -767,12 +775,83 @@ function autoScrollLogs() {
   const autoScroll = document.getElementById('auto-scroll');
   if (autoScroll && autoScroll.checked) {
     const container = document.getElementById('log-container');
-    container.scrollTop = container.scrollHeight;
+    if (container) container.scrollTop = container.scrollHeight;
   }
 }
 
 window.clearLogView = function () {
-  document.getElementById('log-entries').innerHTML = '';
+  const el = document.getElementById('log-entries');
+  if (el) el.innerHTML = '';
+};
+
+// --- Terminal Tab ---
+function ansiToHtml(text) {
+  // Convert basic ANSI escape codes to HTML spans
+  return text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\x1b\[31m/g, '<span style="color:#ef4444">') // red
+    .replace(/\x1b\[32m/g, '<span style="color:#22c55e">') // green
+    .replace(/\x1b\[33m/g, '<span style="color:#f59e0b">') // yellow
+    .replace(/\x1b\[34m/g, '<span style="color:#3b82f6">') // blue
+    .replace(/\x1b\[35m/g, '<span style="color:#a855f7">') // magenta
+    .replace(/\x1b\[36m/g, '<span style="color:#06b6d4">') // cyan
+    .replace(/\x1b\[0m/g, '</span>') // reset
+    .replace(/\x1b\[[0-9;]*m/g, '') // remove other escape codes
+    .replace(/\r\n/g, '<br>').replace(/\n/g, '<br>');
+}
+
+function appendTerminalOutput(data) {
+  const container = document.getElementById('terminal-output');
+  if (!container) return;
+
+  // Remove placeholder text if present
+  if (container.querySelector('[style*="color: var(--text-muted)"]')) {
+    container.innerHTML = '';
+  }
+
+  container.insertAdjacentHTML('beforeend', ansiToHtml(data));
+  container.scrollTop = container.scrollHeight;
+}
+
+window.handleTerminalCommand = function (event) {
+  if (event.key === 'Enter') {
+    window.submitTerminalCommand();
+  }
+};
+
+window.submitTerminalCommand = function () {
+  const input = document.getElementById('terminal-cmd-input');
+  const cmd = input?.value?.trim();
+  if (!cmd || !currentLogProjectId) return;
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'run-command',
+      projectId: currentLogProjectId,
+      command: cmd
+    }));
+  }
+  input.value = '';
+};
+
+window.runQuickCommand = function (cmd) {
+  if (!currentLogProjectId) return;
+
+  // Switch to terminal tab
+  window.switchModalTab('terminal');
+
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({
+      type: 'run-command',
+      projectId: currentLogProjectId,
+      command: cmd
+    }));
+  }
+};
+
+window.clearTerminalOutput = function () {
+  const container = document.getElementById('terminal-output');
+  if (container) container.innerHTML = '<div style="color: var(--text-muted);">Run dependency commands here. Only install/update commands are allowed.</div>';
 };
 
 // ===========================

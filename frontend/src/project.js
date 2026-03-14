@@ -215,10 +215,6 @@ async function loadFiles(path = '') {
 
     try {
         const files = await api.fetchProjectFiles(project.id, path);
-        // We will just render a flat list of files for now with basic indentation or simple clicking into folders.
-        // For simplicity in a side-project: let's render root files, and if user clicks a folder, we load that folder's contents.
-        // Actually, a simple breadcrumb or flat list is easiest to manage here without a UI framework.
-
         currentFiles = files;
         renderFiles(path, files);
     } catch (error) {
@@ -235,10 +231,8 @@ function renderFiles(currentPath, files) {
     const treeEl = document.getElementById('file-tree');
     treeEl.innerHTML = '';
 
-    // Add an 'up' button if we are not at root
     if (currentPath !== '') {
         const parentPath = currentPath.split('/').slice(0, -1).join('/');
-
         const upEl = document.createElement('div');
         upEl.className = 'file-tree-item directory';
         upEl.innerHTML = `
@@ -262,7 +256,6 @@ function renderFiles(currentPath, files) {
         const el = document.createElement('div');
         el.className = `file-tree-item ${file.isDirectory ? 'directory' : ''} ${file.path === currentFilePath ? 'active' : ''}`;
 
-        // Pick icon
         let iconHtml = '';
         if (file.isDirectory) {
             iconHtml = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>';
@@ -280,7 +273,6 @@ function renderFiles(currentPath, files) {
                 loadFiles(file.path);
             } else {
                 openFile(file.path, file.name);
-                // Update active state in UI
                 document.querySelectorAll('.file-tree-item').forEach(i => i.classList.remove('active'));
                 el.classList.add('active');
             }
@@ -306,7 +298,6 @@ async function openFile(path, name) {
 
         editor.setValue(content, -1);
 
-        // Auto detect language mode
         const modelist = ace.require("ace/ext/modelist");
         const mode = modelist.getModeForPath(name).mode;
         editor.session.setMode(mode);
@@ -326,13 +317,13 @@ async function openFile(path, name) {
     }
 }
 
-// --- Live Logs Logic ---
+// --- Live Logs & Terminal Logic ---
 
 let ws = null;
 let reconnectInterval = null;
 
 function connectWebSocket() {
-    if (ws) return; // already connected
+    if (ws) return;
 
     try {
         ws = api.createWebSocket();
@@ -352,7 +343,13 @@ function connectWebSocket() {
                 }
 
                 if (msg.type === 'logs_history' && msg.projectId === project.id) {
-                    renderLogEntries(msg.logs);
+                    if (Array.isArray(msg.logs)) {
+                        renderLogEntries(msg.logs);
+                    }
+                }
+
+                if (msg.type === 'cmd-data' && msg.projectId === project.id) {
+                    appendProjectTerminalOutput(msg.data);
                 }
 
                 if (msg.type === 'status' && msg.projectId === project.id) {
@@ -381,6 +378,8 @@ function connectWebSocket() {
     }
 }
 
+// --- Logs Tab ---
+
 function renderLogEntries(logs) {
     const container = document.getElementById('project-log-entries');
     if (!container) return;
@@ -392,7 +391,7 @@ function appendLogEntry(log) {
     const container = document.getElementById('project-log-entries');
     if (!container) return;
 
-    // remove "connecting" text if it's the first log
+    // Remove placeholder
     if (container.innerHTML.includes('Connecting to log stream')) {
         container.innerHTML = '';
     }
@@ -404,14 +403,14 @@ function appendLogEntry(log) {
 function createLogEntryHtml(log) {
     const time = new Date(log.timestamp).toLocaleTimeString('en-US', { hour12: false });
     let msgClass = '';
-    if (log.message.includes('❌') || log.message.includes('error') || log.message.includes('Error')) {
-        msgClass = 'color: #ef4444;'; // error red
-    } else if (log.message.includes('✅') || log.message.includes('success')) {
-        msgClass = 'color: #22c55e;'; // success green
-    } else if (log.message.includes('⚠️') || log.message.includes('warn')) {
-        msgClass = 'color: #f59e0b;'; // warning yellow
+    if (log.message.includes('❌') || log.message.toLowerCase().includes('error')) {
+        msgClass = 'color: #ef4444;';
+    } else if (log.message.includes('✅') || log.message.toLowerCase().includes('success')) {
+        msgClass = 'color: #22c55e;';
+    } else if (log.message.includes('⚠️') || log.message.toLowerCase().includes('warn')) {
+        msgClass = 'color: #f59e0b;';
     } else {
-        msgClass = 'color: #a1a1aa;'; // normal text
+        msgClass = 'color: #a1a1aa;';
     }
 
     return `
@@ -432,35 +431,102 @@ function autoScrollLogs() {
     }
 }
 
-window.clearLogs = function () {
-    const container = document.getElementById('project-log-entries');
-    if (container) container.innerHTML = '';
-};
+// --- Terminal Tab ---
 
-window.handleTerminalInput = function (event) {
-    const inputMap = event.target;
+function ansiToHtml(text) {
+    return text
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\x1b\[31m/g, '<span style="color:#ef4444">')
+        .replace(/\x1b\[32m/g, '<span style="color:#22c55e">')
+        .replace(/\x1b\[33m/g, '<span style="color:#f59e0b">')
+        .replace(/\x1b\[34m/g, '<span style="color:#3b82f6">')
+        .replace(/\x1b\[35m/g, '<span style="color:#a855f7">')
+        .replace(/\x1b\[36m/g, '<span style="color:#06b6d4">')
+        .replace(/\x1b\[0m/g, '</span>')
+        .replace(/\x1b\[[0-9;]*m/g, '')
+        .replace(/\r\n/g, '<br>').replace(/\n/g, '<br>');
+}
 
-    // Support Ctrl+C mapping to emulate terminal kill
-    if (event.ctrlKey && event.key === 'c') {
-        event.preventDefault();
-        inputMap.value = '';
-        if (project && project.id) {
-            handleStop(); // Leverage existing handleStop method on this page
-        }
-        return;
+function appendProjectTerminalOutput(data) {
+    const container = document.getElementById('project-terminal-output');
+    if (!container) return;
+
+    if (container.querySelector('[style*="color: var(--text-muted)"]')) {
+        container.innerHTML = '';
     }
 
-    if (event.key === 'Enter') {
-        const val = inputMap.value;
-        if (!val || !project || !project.id) return;
+    container.insertAdjacentHTML('beforeend', ansiToHtml(data));
+    container.scrollTop = container.scrollHeight;
+}
 
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'stdin',
-                projectId: project.id,
-                data: val
-            }));
-        }
-        inputMap.value = '';
+// --- Tab Switching ---
+
+window.switchProjectTab = function (tab) {
+    const tabLogs = document.getElementById('project-tab-logs');
+    const tabTerminal = document.getElementById('project-tab-terminal');
+    const panelLogs = document.getElementById('project-panel-logs');
+    const panelTerminal = document.getElementById('project-panel-terminal');
+
+    if (tab === 'logs') {
+        tabLogs.style.color = 'var(--text-primary)';
+        tabLogs.style.fontWeight = '600';
+        tabLogs.style.borderBottom = '2px solid var(--accent-primary)';
+        tabTerminal.style.color = 'var(--text-muted)';
+        tabTerminal.style.fontWeight = '500';
+        tabTerminal.style.borderBottom = '2px solid transparent';
+        panelLogs.style.display = 'flex';
+        panelTerminal.style.display = 'none';
+    } else {
+        tabTerminal.style.color = 'var(--text-primary)';
+        tabTerminal.style.fontWeight = '600';
+        tabTerminal.style.borderBottom = '2px solid var(--accent-primary)';
+        tabLogs.style.color = 'var(--text-muted)';
+        tabLogs.style.fontWeight = '500';
+        tabLogs.style.borderBottom = '2px solid transparent';
+        panelLogs.style.display = 'none';
+        panelTerminal.style.display = 'flex';
+        setTimeout(() => document.getElementById('project-terminal-input')?.focus(), 50);
+    }
+};
+
+// --- Terminal Commands ---
+
+window.submitProjectTerminalCommand = function () {
+    const input = document.getElementById('project-terminal-input');
+    const cmd = input?.value?.trim();
+    if (!cmd || !project || !project.id) return;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'run-command',
+            projectId: project.id,
+            command: cmd
+        }));
+    }
+    input.value = '';
+};
+
+window.runProjectQuickCommand = function (cmd) {
+    if (!project || !project.id) return;
+    window.switchProjectTab('terminal');
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'run-command',
+            projectId: project.id,
+            command: cmd
+        }));
+    }
+};
+
+window.clearProjectLogs = function () {
+    // Clear whichever panel is active
+    const panelLogs = document.getElementById('project-panel-logs');
+    if (panelLogs && panelLogs.style.display !== 'none') {
+        const container = document.getElementById('project-log-entries');
+        if (container) container.innerHTML = '';
+    } else {
+        const container = document.getElementById('project-terminal-output');
+        if (container) container.innerHTML = '<div style="color: var(--text-muted);">Run dependency commands here. Only install/update commands are allowed.</div>';
     }
 };

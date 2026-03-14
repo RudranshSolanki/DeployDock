@@ -243,12 +243,12 @@
       </div>
     </div>
 
-    <!-- Log Modal -->
+    <!-- Log/Terminal Modal -->
     <div class="modal-overlay" id="log-modal">
-      <div class="modal modal-logs">
-        <div class="modal-header">
+      <div class="modal modal-logs" style="max-width: 900px; width: 95vw;">
+        <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
           <div class="log-modal-title">
-            <h2 id="log-modal-project-name">Project Logs</h2>
+            <h2 id="log-modal-project-name">Project</h2>
             <span class="log-status-badge" id="log-modal-status">running</span>
           </div>
           <button class="modal-close" onclick="closeLogModal()">
@@ -257,28 +257,72 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="display: flex; flex-direction: column;">
-          <div class="log-container" id="log-container"
-            style="flex: 1; border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0;">
-            <div class="log-entries" id="log-entries"></div>
+
+        <!-- Tabs -->
+        <div style="display: flex; border-bottom: 1px solid var(--border-color); padding: 0 24px; gap: 0;">
+          <button class="modal-tab active" id="tab-logs" onclick="window.switchModalTab('logs')"
+            style="padding: 10px 20px; border: none; background: none; color: var(--text-primary); font-weight: 600; font-size: 0.9rem; cursor: pointer; border-bottom: 2px solid var(--accent-primary); transition: all 0.2s; display: flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            Logs
+          </button>
+          <button class="modal-tab" id="tab-terminal" onclick="window.switchModalTab('terminal')"
+            style="padding: 10px 20px; border: none; background: none; color: var(--text-muted); font-weight: 500; font-size: 0.9rem; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; display: flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+            Terminal
+          </button>
+        </div>
+
+        <!-- Logs Panel -->
+        <div id="panel-logs" style="display: flex; flex-direction: column; flex: 1;">
+          <div class="modal-body" style="display: flex; flex-direction: column; flex: 1;">
+            <div class="log-container" id="log-container"
+              style="flex: 1; height: 380px; overflow-y: auto; background: #0a0a0a; border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.6;">
+              <div class="log-entries" id="log-entries"></div>
+            </div>
           </div>
-          <div class="terminal-input-container"
-            style="display: flex; background: #0a0a0a; border: 1px solid var(--border-color); border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; padding: 8px 16px; align-items: center;">
-            <span
-              style="color: var(--success); margin-right: 8px; font-family: 'Fira Code', monospace; font-weight: bold;">$</span>
-            <input type="text" id="terminal-input"
-              placeholder="Type command to send to process (e.g. 'rs', 'y', etc)..."
-              style="flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: 'Fira Code', monospace; font-size: 14px; outline: none; padding: 4px;"
-              onkeypress="window.handleTerminalInput(event)">
+          <div class="modal-footer">
+            <label class="auto-scroll-toggle">
+              <input type="checkbox" id="auto-scroll" checked>
+              <span>Auto-scroll</span>
+            </label>
+            <button class="btn btn-ghost btn-sm" onclick="window.clearLogView()">Clear Logs</button>
           </div>
         </div>
-        <div class="modal-footer">
-          <label class="auto-scroll-toggle">
-            <input type="checkbox" id="auto-scroll" checked>
-            <span>Auto-scroll</span>
-          </label>
-          <button class="btn btn-ghost btn-sm" onclick="clearLogView()">Clear View</button>
+
+        <!-- Terminal Panel -->
+        <div id="panel-terminal" style="display: none; flex-direction: column; flex: 1;">
+          <div class="modal-body" style="display: flex; flex-direction: column; flex: 1;">
+            <!-- Quick Action Buttons -->
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px;">
+              <button class="btn btn-ghost btn-sm" onclick="window.runQuickCommand('npm install')" style="font-size: 0.8rem;">📦 npm install</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.runQuickCommand('npm update')" style="font-size: 0.8rem;">🔄 npm update</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.runQuickCommand('npm audit')" style="font-size: 0.8rem;">🔍 npm audit</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.runQuickCommand('npm run build')" style="font-size: 0.8rem;">🏗️ npm run build</button>
+              <button class="btn btn-ghost btn-sm" onclick="window.runQuickCommand('npm list --depth=0')" style="font-size: 0.8rem;">📋 npm list</button>
+            </div>
+
+            <!-- Terminal Output -->
+            <div id="terminal-output"
+              style="flex: 1; height: 310px; overflow-y: auto; background: #0a0a0a; border: 1px solid var(--border-color); border-radius: 8px 8px 0 0; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; line-height: 1.6; color: #d4d4d4;">
+              <div style="color: var(--text-muted);">Run dependency commands here. Only install/update commands are allowed.</div>
+            </div>
+
+            <!-- Command Input -->
+            <div style="display: flex; background: #0a0a0a; border: 1px solid var(--border-color); border-top: 1px solid rgba(255,255,255,0.05); border-radius: 0 0 8px 8px; padding: 8px 16px; align-items: center;">
+              <span style="color: var(--success); margin-right: 8px; font-family: 'JetBrains Mono', monospace; font-weight: bold;">$</span>
+              <input type="text" id="terminal-cmd-input"
+                placeholder="npm install <package>, yarn add <package>..."
+                style="flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 14px; outline: none; padding: 4px;"
+                onkeypress="window.handleTerminalCommand(event)">
+              <button class="btn btn-primary btn-sm" onclick="window.submitTerminalCommand()" style="padding: 4px 12px; font-size: 0.8rem;">Run</button>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <span style="color: var(--text-muted); font-size: 0.8rem;">💡 Only dependency management commands are allowed (npm, yarn, pip, composer, etc.)</span>
+            <button class="btn btn-ghost btn-sm" onclick="window.clearTerminalOutput()">Clear Output</button>
+          </div>
         </div>
+
       </div>
     </div>
   </div>

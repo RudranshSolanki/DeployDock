@@ -2,11 +2,34 @@ const { spawn } = require('child_process');
 const path = require('path');
 const EventEmitter = require('events');
 
+// Whitelist of allowed commands for the restricted terminal
+const ALLOWED_COMMAND_PREFIXES = [
+    'npm install', 'npm i ', 'npm i\r', 'npm uninstall', 'npm update', 'npm audit',
+    'npm list', 'npm ls', 'npm outdated', 'npm run build', 'npm run lint',
+    'npm ci', 'npm cache', 'npm prune', 'npm dedupe',
+    'yarn add', 'yarn remove', 'yarn install', 'yarn upgrade',
+    'pnpm add', 'pnpm remove', 'pnpm install', 'pnpm update',
+    'pip install', 'pip uninstall', 'pip freeze', 'pip list',
+    'composer install', 'composer require', 'composer update',
+    'bundle install', 'gem install',
+    'cargo add', 'cargo install',
+    'go get', 'go mod tidy',
+];
+
 class ProcessManager extends EventEmitter {
     constructor() {
         super();
-        this.processes = new Map(); // projectId -> { process, status, logs }
-        this.maxLogLines = 500;
+        // projectId -> { process, status, logs (string), port, cmdProcess }
+        this.processes = new Map();
+        this.maxLogLength = 100000;
+    }
+
+    /**
+     * Validate if a command is allowed in the restricted terminal
+     */
+    isCommandAllowed(command) {
+        const trimmed = command.trim().toLowerCase();
+        return ALLOWED_COMMAND_PREFIXES.some(prefix => trimmed.startsWith(prefix.toLowerCase()));
     }
 
     /**
@@ -61,8 +84,6 @@ class ProcessManager extends EventEmitter {
         // Kill existing process if any
         this.stopProject(projectId);
 
-        // Smart port injection: Vite/Next.js/CRA ignore PORT env var, 
-        // so we need to inject --port and --host flags into the command
         let finalCommand = this._injectPortIntoCommand(startCommand, port, projectPath);
 
         this._addLog(projectId, `🚀 Starting project on port ${port}`);
@@ -75,7 +96,7 @@ class ProcessManager extends EventEmitter {
             ...process.env,
             ...env,
             PORT: port.toString(),
-            HOST: '0.0.0.0',       // Bind to all interfaces for LAN access
+            HOST: '0.0.0.0',
             HOSTNAME: '0.0.0.0',
         };
 
@@ -84,21 +105,16 @@ class ProcessManager extends EventEmitter {
             env: processEnv,
         });
 
-        const processInfo = {
-            process: proc,
-            status: 'starting',
-            logs: this._getExistingLogs(projectId),
-            port,
-            startTime: new Date(),
-        };
-
-        this.processes.set(projectId, processInfo);
+        const processInfo = this._getOrCreateInfo(projectId);
+        processInfo.process = proc;
+        processInfo.status = 'starting';
+        processInfo.port = port;
+        processInfo.startTime = new Date();
 
         proc.stdout.on('data', (data) => {
             const lines = data.toString().split('\n').filter(l => l.trim());
             lines.forEach(line => {
                 this._addLog(projectId, line);
-                // Detect when server is ready
                 if (line.toLowerCase().includes('listening') ||
                     line.toLowerCase().includes('ready') ||
                     line.toLowerCase().includes('started') ||
@@ -117,6 +133,7 @@ class ProcessManager extends EventEmitter {
         proc.on('close', (code) => {
             this._addLog(projectId, `Process exited with code ${code}`);
             this._updateStatus(projectId, code === 0 ? 'stopped' : 'crashed');
+            processInfo.process = null;
         });
 
         proc.on('error', (err) => {
@@ -124,7 +141,7 @@ class ProcessManager extends EventEmitter {
             this._updateStatus(projectId, 'error');
         });
 
-        // Set running status after a timeout if not already detected
+        // Fallback timeout for running status
         setTimeout(() => {
             const info = this.processes.get(projectId);
             if (info && info.status === 'starting') {
@@ -136,19 +153,82 @@ class ProcessManager extends EventEmitter {
     }
 
     /**
+     * Run a restricted command in the project terminal (only whitelisted commands)
+     */
+    runProjectCommand(projectId, projectPath, command) {
+        if (!this.isCommandAllowed(command)) {
+            this.emit('cmd-data', {
+                projectId,
+                data: `\x1b[31m❌ Command not allowed. Only dependency management commands are permitted.\x1b[0m\r\n` +
+                      `\x1b[33mAllowed: npm install/uninstall, yarn add/remove, pip install, etc.\x1b[0m\r\n`
+            });
+            return false;
+        }
+
+        // Kill any existing command process for this project
+        const info = this._getOrCreateInfo(projectId);
+        if (info.cmdProcess) {
+            try { info.cmdProcess.kill(); } catch (e) { /* ignore */ }
+            info.cmdProcess = null;
+        }
+
+        const isWindows = process.platform === 'win32';
+
+        this.emit('cmd-data', {
+            projectId,
+            data: `\x1b[36m$ ${command}\x1b[0m\r\n`
+        });
+
+        const proc = spawn(
+            isWindows ? 'cmd' : 'sh',
+            isWindows ? ['/c', command] : ['-c', command],
+            {
+                cwd: projectPath,
+                env: { ...process.env },
+            }
+        );
+
+        info.cmdProcess = proc;
+
+        proc.stdout.on('data', (data) => {
+            this.emit('cmd-data', { projectId, data: data.toString().replace(/\n/g, '\r\n') });
+        });
+
+        proc.stderr.on('data', (data) => {
+            this.emit('cmd-data', { projectId, data: data.toString().replace(/\n/g, '\r\n') });
+        });
+
+        proc.on('close', (code) => {
+            const msg = code === 0
+                ? `\x1b[32m✅ Command completed successfully\x1b[0m\r\n`
+                : `\x1b[31m❌ Command failed with exit code ${code}\x1b[0m\r\n`;
+            this.emit('cmd-data', { projectId, data: msg });
+            this.emit('cmd-complete', { projectId, code });
+            info.cmdProcess = null;
+        });
+
+        proc.on('error', (err) => {
+            this.emit('cmd-data', {
+                projectId,
+                data: `\x1b[31m❌ Error: ${err.message}\x1b[0m\r\n`
+            });
+            info.cmdProcess = null;
+        });
+
+        return true;
+    }
+
+    /**
      * Send input (stdin) to a running project process
      */
     sendInput(projectId, input) {
         const info = this.processes.get(projectId);
         if (info && info.process && info.process.stdin) {
             try {
-                // Ensure there is a newline if the command needs to execute
                 const command = input.endsWith('\n') ? input : input + '\n';
                 info.process.stdin.write(command);
-                this._addLog(projectId, `> ${input}`);
                 return true;
             } catch (err) {
-                this._addLog(projectId, `Failed to send input: ${err.message}`);
                 return false;
             }
         }
@@ -189,19 +269,19 @@ class ProcessManager extends EventEmitter {
     }
 
     /**
-     * Get logs for a project
+     * Get logs for a project (array of log entries)
      */
     getLogs(projectId) {
-        const processInfo = this.processes.get(projectId);
-        return processInfo ? processInfo.logs : [];
+        const info = this.processes.get(projectId);
+        return info ? info.logs : [];
     }
 
     /**
      * Get status for a project
      */
     getStatus(projectId) {
-        const processInfo = this.processes.get(projectId);
-        return processInfo ? processInfo.status : 'unknown';
+        const info = this.processes.get(projectId);
+        return info ? info.status : 'unknown';
     }
 
     /**
@@ -212,28 +292,28 @@ class ProcessManager extends EventEmitter {
         this.processes.delete(projectId);
     }
 
-    _getExistingLogs(projectId) {
-        const processInfo = this.processes.get(projectId);
-        return processInfo ? processInfo.logs : [];
+    _getOrCreateInfo(projectId) {
+        let info = this.processes.get(projectId);
+        if (!info) {
+            info = { process: null, status: 'unknown', logs: [], port: null, startTime: null, cmdProcess: null };
+            this.processes.set(projectId, info);
+        }
+        return info;
     }
 
     _addLog(projectId, message) {
-        let processInfo = this.processes.get(projectId);
-        if (!processInfo) {
-            processInfo = { process: null, status: 'unknown', logs: [], port: null, startTime: null };
-            this.processes.set(projectId, processInfo);
-        }
+        const info = this._getOrCreateInfo(projectId);
 
         const logEntry = {
             timestamp: new Date().toISOString(),
             message: message.trim(),
         };
 
-        processInfo.logs.push(logEntry);
+        info.logs.push(logEntry);
 
         // Trim logs if too many
-        if (processInfo.logs.length > this.maxLogLines) {
-            processInfo.logs = processInfo.logs.slice(-this.maxLogLines);
+        if (info.logs.length > 500) {
+            info.logs = info.logs.slice(-500);
         }
 
         // Emit log event for WebSocket
@@ -241,24 +321,19 @@ class ProcessManager extends EventEmitter {
     }
 
     _updateStatus(projectId, status) {
-        const processInfo = this.processes.get(projectId);
-        if (processInfo) {
-            processInfo.status = status;
-        }
+        const info = this._getOrCreateInfo(projectId);
+        info.status = status;
         this.emit('status', { projectId, status });
     }
 
     /**
      * Inject port and host into the start command based on project type.
-     * Vite, Next.js, CRA etc. all ignore the PORT env variable,
-     * so we must inject --port and --host flags directly.
      */
     _injectPortIntoCommand(startCommand, port, projectPath) {
         const fs = require('fs');
         const path = require('path');
         let cmd = startCommand;
 
-        // Detect project type from package.json
         let isVite = false;
         let isNext = false;
         let isCRA = false;
@@ -274,23 +349,12 @@ class ProcessManager extends EventEmitter {
             } catch (e) { /* ignore */ }
         }
 
-        // Also detect from the command itself
-        if (cmd.includes('vite') || cmd.includes('npx vite')) {
-            isVite = true;
-        }
-        if (cmd.includes('next')) {
-            isNext = true;
-        }
-        if (cmd.includes('react-scripts')) {
-            isCRA = true;
-        }
+        if (cmd.includes('vite') || cmd.includes('npx vite')) isVite = true;
+        if (cmd.includes('next')) isNext = true;
+        if (cmd.includes('react-scripts')) isCRA = true;
 
-        // Inject flags based on project type
         if (isVite) {
-            // Remove any existing --port or --host flags
             cmd = cmd.replace(/--port\s+\d+/g, '').replace(/--host\s+[\w.]+/g, '').trim();
-
-            // If command is "npm run dev" or "npm start", we need to add -- to pass flags
             if (cmd.startsWith('npm run') || cmd === 'npm start') {
                 cmd = `${cmd} -- --port ${port} --host 0.0.0.0`;
             } else {
@@ -303,9 +367,6 @@ class ProcessManager extends EventEmitter {
             } else {
                 cmd = `${cmd} -p ${port}`;
             }
-        } else if (isCRA) {
-            // CRA uses PORT env var, which we already set — but also set HOST
-            // No flag injection needed, env vars work
         }
 
         return cmd;

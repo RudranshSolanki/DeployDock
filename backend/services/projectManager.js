@@ -364,7 +364,6 @@ class ProjectManager {
             projects.push({
                 ...project,
                 status: processManager.getStatus(id) || project.status,
-                logs: processManager.getLogs(id).slice(-20),
             });
         }
         return projects;
@@ -394,7 +393,6 @@ class ProjectManager {
         return {
             ...project,
             status: processManager.getStatus(projectId) || project.status,
-            logs: processManager.getLogs(projectId),
         };
     }
 
