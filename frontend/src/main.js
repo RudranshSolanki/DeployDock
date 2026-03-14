@@ -441,6 +441,87 @@ window.handleFileSelect = function (event) {
   }
 };
 
+window.handleFolderSelect = async function (event) {
+  const files = event.target.files;
+  if (!files || files.length === 0) return;
+
+  const deployBtn = document.getElementById('deploy-btn');
+  deployBtn.disabled = true;
+  document.getElementById('upload-zone').style.display = 'none';
+  document.getElementById('selected-file').style.display = 'flex';
+  document.getElementById('file-name').textContent = "Zipping folder...";
+  document.getElementById('file-size').textContent = "";
+
+  try {
+    const zipFile = await createZipFromFileList(files);
+    selectedFile = zipFile;
+    showSelectedFile(zipFile);
+  } catch (e) {
+    showToast("Failed to zip folder: " + e.message, 'error');
+    clearFile();
+  }
+};
+
+async function createZipFromFileList(files) {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  let rootFolderName = "project";
+
+  if (files.length > 0 && files[0].webkitRelativePath) {
+    rootFolderName = files[0].webkitRelativePath.split('/')[0] || "project";
+  }
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const path = file.webkitRelativePath || file.name;
+
+    // Ignore node_modules, .git
+    if (path.includes('/node_modules/') || path.includes('/.git/') || path.includes('\\node_modules\\') || path.includes('\\.git\\')) continue;
+    if (path.startsWith('node_modules/') || path.startsWith('.git/')) continue;
+
+    zip.file(path, file);
+  }
+
+  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 5 } });
+  return new File([blob], `${rootFolderName}.zip`, { type: "application/zip", lastModified: new Date().getTime() });
+}
+
+async function createZipFromDirectoryEntry(dirEntry) {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+
+  async function walk(entry, currentPath) {
+    if (entry.name === 'node_modules' || entry.name === '.git') return;
+
+    if (entry.isDirectory) {
+      const dirReader = entry.createReader();
+      let allEntries = [];
+      let readMore = true;
+
+      while (readMore) {
+        const entries = await new Promise((resolve) => dirReader.readEntries(resolve));
+        if (entries.length === 0) {
+          readMore = false;
+        } else {
+          allEntries.push(...entries);
+        }
+      }
+
+      for (let i = 0; i < allEntries.length; i++) {
+        await walk(allEntries[i], currentPath + entry.name + '/');
+      }
+    } else if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      zip.file(currentPath + entry.name, file);
+    }
+  }
+
+  await walk(dirEntry, "");
+
+  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 5 } });
+  return new File([blob], `${dirEntry.name}.zip`, { type: "application/zip", lastModified: new Date().getTime() });
+}
+
 function showSelectedFile(file) {
   const zone = document.getElementById('upload-zone');
   const fileEl = document.getElementById('selected-file');
@@ -717,13 +798,40 @@ function setupDragAndDrop() {
     });
   });
 
-  uploadZone.addEventListener('drop', (e) => {
+  uploadZone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uploadZone.classList.remove('drag-over');
+
+    const items = e.dataTransfer.items;
     const files = e.dataTransfer.files;
+
+    if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+      const entry = items[0].webkitGetAsEntry();
+      if (entry && entry.isDirectory) {
+        document.getElementById('deploy-btn').disabled = true;
+        document.getElementById('upload-zone').style.display = 'none';
+        document.getElementById('selected-file').style.display = 'flex';
+        document.getElementById('file-name').textContent = "Zipping folder...";
+        document.getElementById('file-size').textContent = "";
+
+        try {
+          const zipFile = await createZipFromDirectoryEntry(entry);
+          selectedFile = zipFile;
+          showSelectedFile(zipFile);
+        } catch (err) {
+          showToast("Failed to zip folder", "error");
+          clearFile();
+        }
+        return;
+      }
+    }
+
     if (files.length > 0 && files[0].name.endsWith('.zip')) {
       selectedFile = files[0];
       showSelectedFile(files[0]);
     } else {
-      showToast('Please drop a .zip file', 'error');
+      showToast('Please drop a folder or .zip file', 'error');
     }
   });
 }
@@ -790,6 +898,7 @@ window.handleStop = handleStop;
 window.handleRestart = handleRestart;
 window.openLogModal = openLogModal;
 window.closeLogModal = closeLogModal;
+window.handleFolderSelect = window.handleFolderSelect || function () { }; // Bound during declaration
 
 window.copyToClipboard = (text, btnElement) => {
   navigator.clipboard.writeText(text).then(() => {

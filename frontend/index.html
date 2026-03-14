@@ -163,8 +163,12 @@
           </button>
         </div>
         <div class="modal-body">
-          <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+          <div class="upload-zone" id="upload-zone" ondragover="event.preventDefault()" ondrop="event.preventDefault()">
+            <!-- Inputs for clicking -->
             <input type="file" id="file-input" accept=".zip" hidden onchange="handleFileSelect(event)">
+            <input type="file" id="folder-input" webkitdirectory directory multiple hidden
+              onchange="handleFolderSelect(event)">
+
             <div class="upload-zone-content">
               <div class="upload-icon">
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -175,8 +179,17 @@
                     stroke-width="2.5" stroke-linecap="round" />
                 </svg>
               </div>
-              <h3>Drop your ZIP file here</h3>
-              <p>or click to browse • Max 100MB</p>
+              <h3>Drop your Project Folder or ZIP here</h3>
+              <p>Folders are automatically zipped and <code>node_modules</code> are ignored (Max 100MB)</p>
+
+              <div style="margin-top: 16px; display: flex; gap: 12px; justify-content: center;">
+                <button class="btn btn-primary btn-sm"
+                  onclick="event.stopPropagation(); document.getElementById('folder-input').click()">📁 Select
+                  Folder</button>
+                <button class="btn btn-ghost btn-sm"
+                  onclick="event.stopPropagation(); document.getElementById('file-input').click()">📦 Select .zip
+                  File</button>
+              </div>
             </div>
           </div>
           <div class="selected-file" id="selected-file" style="display:none">
