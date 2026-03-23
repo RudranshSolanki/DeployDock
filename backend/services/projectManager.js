@@ -263,6 +263,18 @@ class ProjectManager {
     }
 
     /**
+     * Update project database configuration
+     */
+    updateProjectDatabase(projectId, dbConfig) {
+        const project = this.projects.get(projectId);
+        if (!project) throw new Error('Project not found');
+
+        project.dbConfig = dbConfig;
+        this._saveProjects();
+        return project;
+    }
+
+    /**
      * Restart a project
      */
     async restartProject(projectId) {

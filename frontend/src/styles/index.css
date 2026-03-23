@@ -1320,3 +1320,82 @@ details[open].folder-group > div {
     font-size: 0.8rem;
   }
 }
+
+/* --- Log Entries --- */
+.log-entry {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.log-timestamp {
+  color: #52525b;
+  flex-shrink: 0;
+  font-size: 0.82rem;
+}
+
+.log-message {
+  color: #a1a1aa;
+}
+
+.log-message.error-log {
+  color: #ef4444;
+}
+
+.log-message.success-log {
+  color: #22c55e;
+}
+
+.log-message.warning-log {
+  color: #f59e0b;
+}
+
+/* --- Form Groups (Database connect) --- */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-md);
+}
+
+.form-group label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.form-control {
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-primary);
+  font-size: 0.9rem;
+  transition: border-color var(--transition-fast);
+  outline: none;
+}
+
+.form-control:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.form-control::placeholder {
+  color: var(--text-muted);
+}
+
+/* --- Auto-scroll toggle --- */
+.auto-scroll-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.auto-scroll-toggle input[type="checkbox"] {
+  accent-color: var(--accent-primary);
+}

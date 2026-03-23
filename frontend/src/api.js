@@ -141,3 +141,63 @@ export async function saveFileContent(id, path, content) {
     if (!data.success) throw new Error(data.error || 'Failed to save file');
     return data;
 }
+
+// ===========================
+//  Database API
+// ===========================
+
+export async function dbConnect(projectId, config) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Connection failed');
+    return data;
+}
+
+export async function dbDisconnect(projectId) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/disconnect`, {
+        method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Disconnect failed');
+    return data;
+}
+
+export async function dbGetTables(projectId) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/tables`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to fetch tables');
+    return data.tables;
+}
+
+export async function dbGetTableData(projectId, tableName, limit = 100) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/tables/${encodeURIComponent(tableName)}?limit=${limit}`);
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Failed to fetch table data');
+    return data.data;
+}
+
+export async function dbRunQuery(projectId, query) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Query failed');
+    return data.result;
+}
+
+export async function dbImportDump(projectId, sqlContent) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sqlContent }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Import failed');
+    return data.result;
+}

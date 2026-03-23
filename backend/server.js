@@ -33,7 +33,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 const projectRoutes = require('./routes/projects');
+const databaseRoutes = require('./routes/databases');
 app.use('/api/projects', projectRoutes);
+app.use('/api/databases', databaseRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -153,23 +155,30 @@ proxyManager.start();
 // Start server on 0.0.0.0 so LAN devices can access
 server.listen(PORT, '0.0.0.0', () => {
     const proxyPort = proxyManager.getProxyPort();
-    console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║                                                                ║
-║          🚀 DeployDock Server Running                          ║
-║                                                                ║
-║   LAN IP:        ${LAN_IP.padEnd(46)}║
-║                                                                ║
-║   API:           http://localhost:${PORT}                        ║
-║   Reverse Proxy: http://localhost:${proxyPort}                       ║
-║                                                                ║
-║   📱 LAN Access (other devices on same network):               ║
-║   Dashboard:     http://${(LAN_IP + ':' + PORT).padEnd(42)}║
-║   Proxy:         http://${(LAN_IP + ':' + proxyPort).padEnd(42)}║
-║   Projects:      http://${(LAN_IP + ':' + proxyPort + '/<name>/').padEnd(42)}║
-║                                                                ║
-╚════════════════════════════════════════════════════════════════╝
-  `);
+    const lines = [
+        "🚀 DeployDock Server Running",
+        "",
+        `LAN IP:        ${LAN_IP}`,
+        "",
+        `API:           http://localhost:${PORT}`,
+        `Reverse Proxy: http://localhost:${proxyPort}`,
+        "",
+        "📱 LAN Access (other devices on same network):",
+        `Dashboard:     http://${LAN_IP}:${PORT}`,
+        `Proxy:         http://${LAN_IP}:${proxyPort}`,
+        `Projects:      http://${LAN_IP}:${proxyPort}/<name>/`,
+    ];
+
+    // Calculate dynamic width
+    const WIDTH = Math.max(...lines.map(l => l.length)) + 10;
+
+    // Helpers
+    const top = "╔" + "═".repeat(WIDTH - 2) + "╗";
+    const bottom = "╚" + "═".repeat(WIDTH - 2) + "╝";
+    const line = (text = "") => `║  ${text.padEnd(WIDTH - 6)}  ║`;
+    console.log(top);
+    lines.forEach(l => console.log(line(l)));
+    console.log(bottom);
 
     // Auto-redeploy all projects
     projectManager.autoDeployAllProjects();

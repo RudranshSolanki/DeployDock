@@ -459,33 +459,42 @@ function appendProjectTerminalOutput(data) {
     container.scrollTop = container.scrollHeight;
 }
 
-// --- Tab Switching ---
+// --- Tab Switching (3 tabs: logs, terminal, database) ---
+
+const allTabs = ['logs', 'terminal', 'database'];
 
 window.switchProjectTab = function (tab) {
-    const tabLogs = document.getElementById('project-tab-logs');
-    const tabTerminal = document.getElementById('project-tab-terminal');
-    const panelLogs = document.getElementById('project-panel-logs');
-    const panelTerminal = document.getElementById('project-panel-terminal');
+    allTabs.forEach(t => {
+        const tabBtn = document.getElementById(`project-tab-${t}`);
+        const panel = document.getElementById(`project-panel-${t}`);
+        if (!tabBtn || !panel) return;
 
-    if (tab === 'logs') {
-        tabLogs.style.color = 'var(--text-primary)';
-        tabLogs.style.fontWeight = '600';
-        tabLogs.style.borderBottom = '2px solid var(--accent-primary)';
-        tabTerminal.style.color = 'var(--text-muted)';
-        tabTerminal.style.fontWeight = '500';
-        tabTerminal.style.borderBottom = '2px solid transparent';
-        panelLogs.style.display = 'flex';
-        panelTerminal.style.display = 'none';
-    } else {
-        tabTerminal.style.color = 'var(--text-primary)';
-        tabTerminal.style.fontWeight = '600';
-        tabTerminal.style.borderBottom = '2px solid var(--accent-primary)';
-        tabLogs.style.color = 'var(--text-muted)';
-        tabLogs.style.fontWeight = '500';
-        tabLogs.style.borderBottom = '2px solid transparent';
-        panelLogs.style.display = 'none';
-        panelTerminal.style.display = 'flex';
+        if (t === tab) {
+            tabBtn.style.color = 'var(--text-primary)';
+            tabBtn.style.fontWeight = '600';
+            tabBtn.style.borderBottom = '2px solid var(--accent-primary)';
+            panel.style.display = 'flex';
+        } else {
+            tabBtn.style.color = 'var(--text-muted)';
+            tabBtn.style.fontWeight = '500';
+            tabBtn.style.borderBottom = '2px solid transparent';
+            panel.style.display = 'none';
+        }
+    });
+
+    if (tab === 'terminal') {
         setTimeout(() => document.getElementById('project-terminal-input')?.focus(), 50);
+    }
+    if (tab === 'database') {
+        // Auto-populate saved credentials if available
+        if (project && project.dbConfig && !dbConnected) {
+            document.getElementById('db-type').value = project.dbConfig.type || 'mysql';
+            document.getElementById('db-host').value = project.dbConfig.host || '';
+            document.getElementById('db-port').value = project.dbConfig.port || '';
+            document.getElementById('db-user').value = project.dbConfig.user || '';
+            document.getElementById('db-pass').value = project.dbConfig.password || '';
+            document.getElementById('db-name').value = project.dbConfig.database || '';
+        }
     }
 };
 
@@ -520,7 +529,6 @@ window.runProjectQuickCommand = function (cmd) {
 };
 
 window.clearProjectLogs = function () {
-    // Clear whichever panel is active
     const panelLogs = document.getElementById('project-panel-logs');
     if (panelLogs && panelLogs.style.display !== 'none') {
         const container = document.getElementById('project-log-entries');
@@ -529,4 +537,275 @@ window.clearProjectLogs = function () {
         const container = document.getElementById('project-terminal-output');
         if (container) container.innerHTML = '<div style="color: var(--text-muted);">Run dependency commands here. Only install/update commands are allowed.</div>';
     }
+};
+
+// ===========================
+//  Database Explorer
+// ===========================
+
+let dbConnected = false;
+
+window.connectDatabase = async function () {
+    if (!project || !project.id) return;
+
+    const btn = document.getElementById('db-connect-btn');
+    btn.textContent = 'Connecting...';
+    btn.disabled = true;
+
+    const config = {
+        type: document.getElementById('db-type').value,
+        host: document.getElementById('db-host').value || 'localhost',
+        port: parseInt(document.getElementById('db-port').value) || undefined,
+        user: document.getElementById('db-user').value,
+        password: document.getElementById('db-pass').value,
+        database: document.getElementById('db-name').value,
+    };
+
+    try {
+        await api.dbConnect(project.id, config);
+        dbConnected = true;
+
+        document.getElementById('db-connect-view').style.display = 'none';
+        document.getElementById('db-active-view').style.display = 'flex';
+        document.getElementById('db-active-name').textContent = config.database || config.type;
+
+        showToast('Database connected!', 'success');
+        await loadDbTables();
+    } catch (error) {
+        showToast(`Connection failed: ${error.message}`, 'error');
+    } finally {
+        btn.textContent = 'Connect';
+        btn.disabled = false;
+    }
+};
+
+window.disconnectDatabase = async function () {
+    if (!project || !project.id) return;
+
+    try {
+        await api.dbDisconnect(project.id);
+    } catch (e) { /* ignore */ }
+
+    dbConnected = false;
+    document.getElementById('db-connect-view').style.display = 'flex';
+    document.getElementById('db-active-view').style.display = 'none';
+
+    // Reset data grid
+    document.getElementById('db-data-table').style.display = 'none';
+    document.getElementById('db-data-placeholder').style.display = 'block';
+    document.getElementById('db-data-thead').innerHTML = '';
+    document.getElementById('db-data-tbody').innerHTML = '';
+
+    showToast('Database disconnected', 'info');
+};
+
+async function loadDbTables() {
+    if (!project || !project.id) return;
+
+    const listEl = document.getElementById('db-tables-list');
+    listEl.innerHTML = '<div style="padding: 12px 16px; color: var(--text-muted); font-size: 0.85rem;">Loading tables...</div>';
+
+    try {
+        const tables = await api.dbGetTables(project.id);
+
+        if (tables.length === 0) {
+            listEl.innerHTML = '<div style="padding: 12px 16px; color: var(--text-muted); font-size: 0.85rem;">No tables found</div>';
+            return;
+        }
+
+        listEl.innerHTML = tables.map(t => `
+            <div class="db-table-item" onclick="window.loadTableData('${escapeHtml(t)}')"
+                style="padding: 9px 16px; cursor: pointer; font-size: 0.82rem; color: var(--text-secondary); transition: all 0.15s; display: flex; align-items: center; gap: 8px; border-left: 2px solid transparent;"
+                onmouseover="this.style.background='rgba(99,102,241,0.06)'; this.style.borderLeftColor='var(--accent-primary)'"
+                onmouseout="this.style.background='transparent'; this.style.borderLeftColor='transparent'">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-secondary)" stroke-width="2" style="flex-shrink: 0; opacity: 0.6;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.8rem;">${escapeHtml(t)}</span>
+            </div>
+        `).join('');
+    } catch (error) {
+        listEl.innerHTML = `<div style="padding: 12px 16px; color: var(--error); font-size: 0.85rem;">${escapeHtml(error.message)}</div>`;
+    }
+}
+
+window.loadDbTables = loadDbTables;
+
+window.loadTableData = async function (tableName) {
+    if (!project || !project.id) return;
+
+    // Highlight active table in sidebar
+    document.querySelectorAll('.db-table-item').forEach(el => {
+        el.style.background = 'transparent';
+        el.style.borderLeftColor = 'transparent';
+    });
+    // Find and highlight the clicked one
+    event?.target?.closest?.('.db-table-item')?.style && (() => {
+        const item = event.target.closest('.db-table-item');
+        item.style.background = 'rgba(99,102,241,0.08)';
+        item.style.borderLeftColor = 'var(--accent-primary)';
+    })();
+
+    const placeholder = document.getElementById('db-data-placeholder');
+    const table = document.getElementById('db-data-table');
+    const thead = document.getElementById('db-data-thead');
+    const tbody = document.getElementById('db-data-tbody');
+    const panelData = document.getElementById('db-panel-data');
+
+    placeholder.style.display = 'block';
+    placeholder.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading <b>${escapeHtml(tableName)}</b>...</div>`;
+    table.style.display = 'none';
+
+    try {
+        const data = await api.dbGetTableData(project.id, tableName);
+
+        if (!data || data.length === 0) {
+            placeholder.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">Table <b>"${escapeHtml(tableName)}"</b> is empty.</div>`;
+            return;
+        }
+
+        const columns = Object.keys(data[0]);
+
+        // Row count info bar
+        let infoBar = `<div style="padding: 8px 16px; background: rgba(99,102,241,0.04); border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+            <b style="color: var(--text-primary);">${escapeHtml(tableName)}</b>
+            <span>—</span>
+            <span>${data.length} row${data.length !== 1 ? 's' : ''} · ${columns.length} column${columns.length !== 1 ? 's' : ''}</span>
+        </div>`;
+
+        // Header with gradient bg
+        const colWidth = Math.max(Math.floor(100 / columns.length), 10);
+        thead.innerHTML = `<tr>${columns.map(c => 
+            `<th style="padding: 10px 16px; text-align: left; border-bottom: 2px solid rgba(99,102,241,0.2); white-space: nowrap; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-primary); background: rgba(10,11,20,0.95); width: ${colWidth}%;">${escapeHtml(String(c))}</th>`
+        ).join('')}</tr>`;
+
+        // Rows with alternating colors
+        tbody.innerHTML = data.map((row, i) => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03); background: ${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}; transition: background 0.1s;"
+                onmouseover="this.style.background='rgba(99,102,241,0.06)'"
+                onmouseout="this.style.background='${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}'"
+            >
+                ${columns.map(c => {
+                    let val = row[c];
+                    if (val === null || val === undefined) val = '<span style="color: #444; font-style: italic;">NULL</span>';
+                    else if (typeof val === 'object') val = `<span style="color: #8b5cf6;">${escapeHtml(JSON.stringify(val))}</span>`;
+                    else if (typeof val === 'number') val = `<span style="color: #22d3ee;">${val}</span>`;
+                    else if (typeof val === 'boolean') val = `<span style="color: ${val ? '#22c55e' : '#ef4444'};">${val}</span>`;
+                    else val = escapeHtml(String(val));
+                    return `<td style="padding: 8px 16px; overflow: hidden; text-overflow: ellipsis;">${val}</td>`;
+                }).join('')}
+            </tr>
+        `).join('');
+
+        placeholder.style.display = 'none';
+
+        // Insert info bar before the table
+        const existingInfoBar = panelData.querySelector('.db-info-bar');
+        if (existingInfoBar) existingInfoBar.remove();
+        const barDiv = document.createElement('div');
+        barDiv.className = 'db-info-bar';
+        barDiv.innerHTML = infoBar;
+        panelData.insertBefore(barDiv, table);
+
+        table.style.display = 'table';
+    } catch (error) {
+        placeholder.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--error);">Error: ${escapeHtml(error.message)}</div>`;
+    }
+};
+
+// --- DB Sub-tabs (Data Grid / Run Query) ---
+
+window.switchDbTab = function (tab) {
+    const tabData = document.getElementById('db-tab-data');
+    const tabQuery = document.getElementById('db-tab-query');
+    const panelData = document.getElementById('db-panel-data');
+    const panelQuery = document.getElementById('db-panel-query');
+
+    if (tab === 'data') {
+        tabData.style.borderBottom = '2px solid var(--accent-primary)';
+        tabData.style.color = 'white';
+        tabQuery.style.borderBottom = '2px solid transparent';
+        tabQuery.style.color = 'var(--text-muted)';
+        panelData.style.display = 'block';
+        panelQuery.style.display = 'none';
+    } else {
+        tabQuery.style.borderBottom = '2px solid var(--accent-primary)';
+        tabQuery.style.color = 'white';
+        tabData.style.borderBottom = '2px solid transparent';
+        tabData.style.color = 'var(--text-muted)';
+        panelData.style.display = 'none';
+        panelQuery.style.display = 'flex';
+        setTimeout(() => document.getElementById('db-query-input')?.focus(), 50);
+    }
+};
+
+// --- Run Query ---
+
+window.runDbQuery = async function () {
+    if (!project || !project.id) return;
+
+    const queryInput = document.getElementById('db-query-input');
+    const query = queryInput?.value?.trim();
+    if (!query) return;
+
+    const resultsEl = document.getElementById('db-query-results');
+    resultsEl.innerHTML = '<div style="color: var(--text-muted);">Executing query...</div>';
+
+    try {
+        const result = await api.dbRunQuery(project.id, query);
+
+        if (!result || (Array.isArray(result) && result.length === 0)) {
+            resultsEl.innerHTML = '<div style="color: var(--success);">Query executed successfully. No rows returned.</div>';
+            // Refresh tables list in case of CREATE/DROP
+            await loadDbTables();
+            return;
+        }
+
+        if (!Array.isArray(result)) {
+            resultsEl.innerHTML = `<pre style="color: #d4d4d4; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; white-space: pre-wrap;">${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
+            return;
+        }
+
+        const columns = Object.keys(result[0]);
+        resultsEl.innerHTML = `
+            <div style="margin-bottom: 8px; color: var(--success); font-size: 0.85rem;">${result.length} row(s) returned</div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; color: #d4d4d4;">
+                <thead><tr>${columns.map(c => `<th style="padding: 8px 12px; text-align: left; border-bottom: 2px solid rgba(255,255,255,0.1); white-space: nowrap; font-weight: 600; color: white;">${escapeHtml(String(c))}</th>`).join('')}</tr></thead>
+                <tbody>${result.map(row => `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                        ${columns.map(c => {
+                            let val = row[c];
+                            if (val === null || val === undefined) val = '<span style="color: #555;">NULL</span>';
+                            else if (typeof val === 'object') val = escapeHtml(JSON.stringify(val));
+                            else val = escapeHtml(String(val));
+                            return `<td style="padding: 6px 12px; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${val}</td>`;
+                        }).join('')}
+                    </tr>
+                `).join('')}</tbody>
+            </table>
+        `;
+    } catch (error) {
+        resultsEl.innerHTML = `<div style="color: var(--error);">Error: ${escapeHtml(error.message)}</div>`;
+    }
+};
+
+// --- Import SQL Dump ---
+
+window.importDbDump = async function (event) {
+    if (!project || !project.id) return;
+    const file = event.target.files[0];
+    if (!file) return;
+
+    showToast(`Importing ${file.name}...`, 'info');
+
+    try {
+        const sqlContent = await file.text();
+        await api.dbImportDump(project.id, sqlContent);
+        showToast('SQL dump imported successfully!', 'success');
+        await loadDbTables();
+    } catch (error) {
+        showToast(`Import failed: ${error.message}`, 'error');
+    }
+
+    // Reset file input
+    event.target.value = '';
 };
