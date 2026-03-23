@@ -632,12 +632,14 @@ window.loadDbTables = loadDbTables;
 window.loadTableData = async function (tableName) {
     if (!project || !project.id) return;
 
+    // Store current table name for refresh
+    window._currentDbTable = tableName;
+
     // Highlight active table in sidebar
     document.querySelectorAll('.db-table-item').forEach(el => {
         el.style.background = 'transparent';
         el.style.borderLeftColor = 'transparent';
     });
-    // Find and highlight the clicked one
     event?.target?.closest?.('.db-table-item')?.style && (() => {
         const item = event.target.closest('.db-table-item');
         item.style.background = 'rgba(99,102,241,0.08)';
@@ -655,7 +657,7 @@ window.loadTableData = async function (tableName) {
     table.style.display = 'none';
 
     try {
-        const data = await api.dbGetTableData(project.id, tableName);
+        const { rows: data, primaryKeys } = await api.dbGetTableData(project.id, tableName);
 
         if (!data || data.length === 0) {
             placeholder.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">Table <b>"${escapeHtml(tableName)}"</b> is empty.</div>`;
@@ -664,41 +666,91 @@ window.loadTableData = async function (tableName) {
 
         const columns = Object.keys(data[0]);
 
-        // Row count info bar
-        let infoBar = `<div style="padding: 8px 16px; background: rgba(99,102,241,0.04); border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
-            <b style="color: var(--text-primary);">${escapeHtml(tableName)}</b>
-            <span>—</span>
-            <span>${data.length} row${data.length !== 1 ? 's' : ''} · ${columns.length} column${columns.length !== 1 ? 's' : ''}</span>
+        // Info bar with edit hint
+        let infoBar = `<div style="padding: 8px 16px; background: rgba(99,102,241,0.04); border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.78rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                <b style="color: var(--text-primary);">${escapeHtml(tableName)}</b>
+                <span>—</span>
+                <span>${data.length} row${data.length !== 1 ? 's' : ''} · ${columns.length} column${columns.length !== 1 ? 's' : ''}</span>
+            </div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); opacity: 0.7;">Double-click cell to edit · Enter to save · Esc to cancel</span>
         </div>`;
 
-        // Header with gradient bg
-        const colWidth = Math.max(Math.floor(100 / columns.length), 10);
-        thead.innerHTML = `<tr>${columns.map(c => 
-            `<th style="padding: 10px 16px; text-align: left; border-bottom: 2px solid rgba(99,102,241,0.2); white-space: nowrap; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-primary); background: rgba(10,11,20,0.95); width: ${colWidth}%;">${escapeHtml(String(c))}</th>`
-        ).join('')}</tr>`;
+        // Header — add Actions column
+        const colWidth = Math.max(Math.floor(100 / (columns.length + 1)), 8);
+        const thStyle = `padding: 10px 16px; text-align: left; border-bottom: 2px solid rgba(99,102,241,0.2); white-space: nowrap; font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-primary); background: rgba(10,11,20,0.95);`;
+        thead.innerHTML = `<tr>${columns.map(c => {
+            const isPK = primaryKeys.includes(c);
+            return `<th style="${thStyle} width: ${colWidth}%;">${escapeHtml(String(c))}${isPK ? ' <span style="color:#f59e0b;font-size:0.65rem;">🔑</span>' : ''}</th>`;
+        }).join('')}<th style="${thStyle} width: 50px; text-align: center;">Actions</th></tr>`;
 
-        // Rows with alternating colors
-        tbody.innerHTML = data.map((row, i) => `
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03); background: ${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}; transition: background 0.1s;"
-                onmouseover="this.style.background='rgba(99,102,241,0.06)'"
-                onmouseout="this.style.background='${i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}'"
-            >
-                ${columns.map(c => {
-                    let val = row[c];
-                    if (val === null || val === undefined) val = '<span style="color: #444; font-style: italic;">NULL</span>';
-                    else if (typeof val === 'object') val = `<span style="color: #8b5cf6;">${escapeHtml(JSON.stringify(val))}</span>`;
-                    else if (typeof val === 'number') val = `<span style="color: #22d3ee;">${val}</span>`;
-                    else if (typeof val === 'boolean') val = `<span style="color: ${val ? '#22c55e' : '#ef4444'};">${val}</span>`;
-                    else val = escapeHtml(String(val));
-                    return `<td style="padding: 8px 16px; overflow: hidden; text-overflow: ellipsis;">${val}</td>`;
-                }).join('')}
-            </tr>
-        `).join('');
+        // Build rows with editable cells
+        tbody.innerHTML = '';
+        data.forEach((row, rowIndex) => {
+            const tr = document.createElement('tr');
+            tr.style.cssText = `border-bottom: 1px solid rgba(255,255,255,0.03); background: ${rowIndex % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)'}; transition: background 0.15s;`;
+            const defaultBg = rowIndex % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)';
+            tr.onmouseover = () => { tr.style.background = 'rgba(99,102,241,0.06)'; };
+            tr.onmouseout = () => { tr.style.background = defaultBg; };
+
+            // Build primary key values for this row
+            const pkValues = {};
+            primaryKeys.forEach(pk => {
+                let v = row[pk];
+                // MongoDB ObjectId: extract $oid string
+                if (v && typeof v === 'object' && v.$oid) v = v.$oid;
+                else if (v && typeof v === 'object') v = JSON.stringify(v);
+                pkValues[pk] = v;
+            });
+
+            // Data cells
+            columns.forEach(col => {
+                const td = document.createElement('td');
+                td.style.cssText = 'padding: 8px 16px; overflow: hidden; text-overflow: ellipsis; max-width: 300px; cursor: default; position: relative;';
+
+                const rawVal = row[col];
+                const isPK = primaryKeys.includes(col);
+                renderCellDisplay(td, rawVal, isPK);
+
+                // Double-click to edit (skip primary key columns and object types)
+                if (!isPK) {
+                    td.ondblclick = () => startCellEdit(td, rawVal, tableName, pkValues, col, row, rowIndex);
+                }
+
+                tr.appendChild(td);
+            });
+
+            // Delete button cell
+            const actionTd = document.createElement('td');
+            actionTd.style.cssText = 'padding: 8px 8px; text-align: center;';
+            const delBtn = document.createElement('button');
+            delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+            delBtn.style.cssText = 'background: none; border: 1px solid rgba(239,68,68,0.2); color: #ef4444; padding: 4px 6px; border-radius: 4px; cursor: pointer; opacity: 0.5; transition: all 0.15s;';
+            delBtn.title = 'Delete row';
+            delBtn.onmouseover = () => { delBtn.style.opacity = '1'; delBtn.style.background = 'rgba(239,68,68,0.1)'; };
+            delBtn.onmouseout = () => { delBtn.style.opacity = '0.5'; delBtn.style.background = 'none'; };
+            delBtn.onclick = async () => {
+                if (!confirm('Delete this row? This action cannot be undone.')) return;
+                try {
+                    await api.dbDeleteRow(project.id, tableName, pkValues);
+                    tr.style.background = 'rgba(239,68,68,0.15)';
+                    tr.style.opacity = '0.5';
+                    setTimeout(() => { tr.remove(); }, 300);
+                    showToast('Row deleted', 'success');
+                } catch (err) {
+                    showToast(`Delete failed: ${err.message}`, 'error');
+                }
+            };
+            actionTd.appendChild(delBtn);
+            tr.appendChild(actionTd);
+
+            tbody.appendChild(tr);
+        });
 
         placeholder.style.display = 'none';
 
-        // Insert info bar before the table
+        // Insert info bar
         const existingInfoBar = panelData.querySelector('.db-info-bar');
         if (existingInfoBar) existingInfoBar.remove();
         const barDiv = document.createElement('div');
@@ -711,6 +763,133 @@ window.loadTableData = async function (tableName) {
         placeholder.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--error);">Error: ${escapeHtml(error.message)}</div>`;
     }
 };
+
+/** Render a cell's display value */
+function renderCellDisplay(td, val, isPK) {
+    if (val === null || val === undefined) {
+        td.innerHTML = '<span style="color: #444; font-style: italic;">NULL</span>';
+    } else if (typeof val === 'object') {
+        td.innerHTML = `<span style="color: #8b5cf6;">${escapeHtml(JSON.stringify(val))}</span>`;
+    } else if (typeof val === 'number') {
+        td.innerHTML = `<span style="color: #22d3ee;">${val}</span>`;
+    } else if (typeof val === 'boolean') {
+        td.innerHTML = `<span style="color: ${val ? '#22c55e' : '#ef4444'};">${val}</span>`;
+    } else {
+        td.textContent = String(val);
+        td.style.color = '#d4d4d4';
+    }
+    if (isPK) {
+        td.style.opacity = '0.6';
+        td.title = 'Primary key (not editable)';
+    }
+}
+
+/** Start inline editing on a cell */
+function startCellEdit(td, rawVal, tableName, pkValues, colName, row, rowIndex) {
+    // Already editing?
+    if (td.querySelector('input, textarea')) return;
+
+    const isObject = rawVal !== null && typeof rawVal === 'object';
+    const displayVal = isObject ? JSON.stringify(rawVal) : (rawVal === null || rawVal === undefined ? '' : String(rawVal));
+    const isLongText = displayVal.length > 60;
+
+    td.innerHTML = '';
+    td.style.padding = '4px 8px';
+
+    let inputEl;
+    if (isLongText || isObject) {
+        inputEl = document.createElement('textarea');
+        inputEl.style.cssText = 'width: 100%; min-height: 60px; max-height: 120px; resize: vertical; background: rgba(99,102,241,0.08); border: 1px solid var(--accent-primary); color: #f0f0f5; padding: 6px 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.82rem; outline: none;';
+    } else {
+        inputEl = document.createElement('input');
+        inputEl.type = 'text';
+        inputEl.style.cssText = 'width: 100%; background: rgba(99,102,241,0.08); border: 1px solid var(--accent-primary); color: #f0f0f5; padding: 6px 8px; border-radius: 4px; font-family: var(--font-mono); font-size: 0.82rem; outline: none;';
+    }
+    inputEl.value = displayVal;
+    td.appendChild(inputEl);
+    inputEl.focus();
+    inputEl.select();
+
+    // Add a small helper bar
+    const helper = document.createElement('div');
+    helper.style.cssText = 'display: flex; gap: 4px; margin-top: 4px;';
+    helper.innerHTML = `
+        <button class="db-edit-save" style="font-size: 0.7rem; padding: 2px 8px; background: var(--accent-primary); color: white; border: none; border-radius: 3px; cursor: pointer;">Save</button>
+        <button class="db-edit-cancel" style="font-size: 0.7rem; padding: 2px 8px; background: rgba(255,255,255,0.06); color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); border-radius: 3px; cursor: pointer;">Cancel</button>
+        <button class="db-edit-null" style="font-size: 0.7rem; padding: 2px 8px; background: rgba(255,255,255,0.03); color: #f59e0b; border: 1px solid rgba(255,255,255,0.1); border-radius: 3px; cursor: pointer;">Set NULL</button>
+    `;
+    td.appendChild(helper);
+
+    const cancelEdit = () => {
+        td.innerHTML = '';
+        td.style.padding = '8px 16px';
+        renderCellDisplay(td, rawVal, false);
+        td.ondblclick = () => startCellEdit(td, rawVal, tableName, pkValues, colName, row, rowIndex);
+    };
+
+    const saveEdit = async (newVal) => {
+        // Parse value type
+        let parsed = newVal;
+        if (newVal === '') parsed = '';
+        else if (newVal === 'true') parsed = true;
+        else if (newVal === 'false') parsed = false;
+        else if (!isNaN(newVal) && newVal.trim() !== '') parsed = Number(newVal);
+
+        // If it's JSON-like, try to parse
+        if (isObject && typeof parsed === 'string') {
+            try { parsed = JSON.parse(parsed); } catch (e) { /* keep as string */ }
+        }
+
+        try {
+            await api.dbUpdateCell(project.id, tableName, pkValues, colName, parsed);
+            // Update the in-memory row value
+            row[colName] = parsed;
+            td.innerHTML = '';
+            td.style.padding = '8px 16px';
+            renderCellDisplay(td, parsed, false);
+            td.ondblclick = () => startCellEdit(td, parsed, tableName, pkValues, colName, row, rowIndex);
+
+            // Flash green
+            td.style.background = 'rgba(34,197,94,0.15)';
+            setTimeout(() => { td.style.background = ''; }, 800);
+            showToast('Cell updated', 'success');
+        } catch (err) {
+            td.style.background = 'rgba(239,68,68,0.15)';
+            setTimeout(() => { td.style.background = ''; }, 800);
+            showToast(`Update failed: ${err.message}`, 'error');
+        }
+    };
+
+    const setNull = async () => {
+        try {
+            await api.dbUpdateCell(project.id, tableName, pkValues, colName, null);
+            row[colName] = null;
+            td.innerHTML = '';
+            td.style.padding = '8px 16px';
+            renderCellDisplay(td, null, false);
+            td.ondblclick = () => startCellEdit(td, null, tableName, pkValues, colName, row, rowIndex);
+            td.style.background = 'rgba(34,197,94,0.15)';
+            setTimeout(() => { td.style.background = ''; }, 800);
+            showToast('Cell set to NULL', 'success');
+        } catch (err) {
+            showToast(`Update failed: ${err.message}`, 'error');
+        }
+    };
+
+    // Event handlers
+    inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(inputEl.value); }
+        if (e.key === 'Escape') cancelEdit();
+        if (e.key === 'Tab') { e.preventDefault(); saveEdit(inputEl.value); }
+    };
+    inputEl.onblur = (e) => {
+        // Don't cancel if clicking save/cancel/null buttons
+        if (e.relatedTarget && td.contains(e.relatedTarget)) return;
+    };
+    helper.querySelector('.db-edit-save').onclick = () => saveEdit(inputEl.value);
+    helper.querySelector('.db-edit-cancel').onclick = cancelEdit;
+    helper.querySelector('.db-edit-null').onclick = () => setNull();
+}
 
 // --- DB Sub-tabs (Data Grid / Run Query) ---
 

@@ -52,7 +52,53 @@ router.get('/:projectId/tables/:tableName', async (req, res) => {
         const { projectId, tableName } = req.params;
         const limit = parseInt(req.query.limit) || 100;
         const data = await dbManager.getTableData(projectId, tableName, limit);
-        res.json({ success: true, data });
+        const primaryKeys = await dbManager.getPrimaryKeys(projectId, tableName);
+        res.json({ success: true, data, primaryKeys });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get primary keys for a table
+router.get('/:projectId/tables/:tableName/keys', async (req, res) => {
+    try {
+        const { projectId, tableName } = req.params;
+        const primaryKeys = await dbManager.getPrimaryKeys(projectId, tableName);
+        res.json({ success: true, primaryKeys });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update a cell value
+router.put('/:projectId/tables/:tableName/row', async (req, res) => {
+    try {
+        const { projectId, tableName } = req.params;
+        const { primaryKeyValues, columnName, newValue } = req.body;
+
+        if (!primaryKeyValues || !columnName) {
+            return res.status(400).json({ error: 'primaryKeyValues and columnName are required' });
+        }
+
+        const result = await dbManager.updateRow(projectId, tableName, primaryKeyValues, columnName, newValue);
+        res.json({ success: true, result });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Delete a row
+router.delete('/:projectId/tables/:tableName/row', async (req, res) => {
+    try {
+        const { projectId, tableName } = req.params;
+        const { primaryKeyValues } = req.body;
+
+        if (!primaryKeyValues) {
+            return res.status(400).json({ error: 'primaryKeyValues is required' });
+        }
+
+        const result = await dbManager.deleteRow(projectId, tableName, primaryKeyValues);
+        res.json({ success: true, result });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

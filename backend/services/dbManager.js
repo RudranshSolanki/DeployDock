@@ -93,13 +93,112 @@ class DbManager {
             const [rows] = await conn.client.query(`SELECT * FROM ?? LIMIT ?`, [tableName, limit]);
             return rows;
         } else if (conn.type === 'postgres') {
-            // Need to quote table name in postgres to avoid case issues
             const result = await conn.client.query(`SELECT * FROM "${tableName}" LIMIT $1`, [limit]);
             return result.rows;
         } else if (conn.type === 'mongodb') {
             const db = conn.client.db(conn.database);
             const data = await db.collection(tableName).find().limit(limit).toArray();
             return data;
+        }
+    }
+
+    /**
+     * Get primary key columns for a table (used for building WHERE clauses)
+     */
+    async getPrimaryKeys(projectId, tableName) {
+        const conn = this.connections.get(projectId);
+        if (!conn) throw new Error('Not connected to database');
+
+        if (conn.type === 'mysql') {
+            const [rows] = await conn.client.query(
+                `SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE 
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'`,
+                [tableName]
+            );
+            return rows.map(r => r.COLUMN_NAME);
+        } else if (conn.type === 'postgres') {
+            const result = await conn.client.query(`
+                SELECT a.attname AS column_name
+                FROM pg_index i
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                WHERE i.indrelid = '"${tableName}"'::regclass AND i.indisprimary
+            `);
+            return result.rows.map(r => r.column_name);
+        } else if (conn.type === 'mongodb') {
+            return ['_id'];
+        }
+    }
+
+    /**
+     * Update a specific cell/field in a row
+     */
+    async updateRow(projectId, tableName, primaryKeyValues, columnName, newValue) {
+        const conn = this.connections.get(projectId);
+        if (!conn) throw new Error('Not connected to database');
+
+        if (conn.type === 'mysql') {
+            const whereClauses = Object.keys(primaryKeyValues).map(k => `\`${k}\` = ?`).join(' AND ');
+            const whereValues = Object.values(primaryKeyValues);
+            const query = `UPDATE \`${tableName}\` SET \`${columnName}\` = ? WHERE ${whereClauses} LIMIT 1`;
+            const [result] = await conn.client.query(query, [newValue, ...whereValues]);
+            return { affectedRows: result.affectedRows };
+        } else if (conn.type === 'postgres') {
+            const keys = Object.keys(primaryKeyValues);
+            const whereClauses = keys.map((k, i) => `"${k}" = $${i + 2}`).join(' AND ');
+            const whereValues = Object.values(primaryKeyValues);
+            const query = `UPDATE "${tableName}" SET "${columnName}" = $1 WHERE ${whereClauses}`;
+            const result = await conn.client.query(query, [newValue, ...whereValues]);
+            return { affectedRows: result.rowCount };
+        } else if (conn.type === 'mongodb') {
+            const db = conn.client.db(conn.database);
+            const { ObjectId } = require('mongodb');
+            // Convert _id string to ObjectId if it looks like one
+            const filter = {};
+            for (const [k, v] of Object.entries(primaryKeyValues)) {
+                if (k === '_id' && typeof v === 'string' && /^[a-f\d]{24}$/i.test(v)) {
+                    filter[k] = new ObjectId(v);
+                } else {
+                    filter[k] = v;
+                }
+            }
+            const result = await db.collection(tableName).updateOne(filter, { $set: { [columnName]: newValue } });
+            return { affectedRows: result.modifiedCount };
+        }
+    }
+
+    /**
+     * Delete a row
+     */
+    async deleteRow(projectId, tableName, primaryKeyValues) {
+        const conn = this.connections.get(projectId);
+        if (!conn) throw new Error('Not connected to database');
+
+        if (conn.type === 'mysql') {
+            const whereClauses = Object.keys(primaryKeyValues).map(k => `\`${k}\` = ?`).join(' AND ');
+            const whereValues = Object.values(primaryKeyValues);
+            const query = `DELETE FROM \`${tableName}\` WHERE ${whereClauses} LIMIT 1`;
+            const [result] = await conn.client.query(query, whereValues);
+            return { affectedRows: result.affectedRows };
+        } else if (conn.type === 'postgres') {
+            const keys = Object.keys(primaryKeyValues);
+            const whereClauses = keys.map((k, i) => `"${k}" = $${i + 1}`).join(' AND ');
+            const whereValues = Object.values(primaryKeyValues);
+            const query = `DELETE FROM "${tableName}" WHERE ${whereClauses}`;
+            const result = await conn.client.query(query, whereValues);
+            return { affectedRows: result.rowCount };
+        } else if (conn.type === 'mongodb') {
+            const db = conn.client.db(conn.database);
+            const { ObjectId } = require('mongodb');
+            const filter = {};
+            for (const [k, v] of Object.entries(primaryKeyValues)) {
+                if (k === '_id' && typeof v === 'string' && /^[a-f\d]{24}$/i.test(v)) {
+                    filter[k] = new ObjectId(v);
+                } else {
+                    filter[k] = v;
+                }
+            }
+            const result = await db.collection(tableName).deleteOne(filter);
+            return { affectedRows: result.deletedCount };
         }
     }
 

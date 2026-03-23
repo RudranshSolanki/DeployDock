@@ -177,7 +177,29 @@ export async function dbGetTableData(projectId, tableName, limit = 100) {
     const res = await fetch(`${API_BASE}/databases/${projectId}/tables/${encodeURIComponent(tableName)}?limit=${limit}`);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Failed to fetch table data');
-    return data.data;
+    return { rows: data.data, primaryKeys: data.primaryKeys || [] };
+}
+
+export async function dbUpdateCell(projectId, tableName, primaryKeyValues, columnName, newValue) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/tables/${encodeURIComponent(tableName)}/row`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryKeyValues, columnName, newValue }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Update failed');
+    return data.result;
+}
+
+export async function dbDeleteRow(projectId, tableName, primaryKeyValues) {
+    const res = await fetch(`${API_BASE}/databases/${projectId}/tables/${encodeURIComponent(tableName)}/row`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ primaryKeyValues }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Delete failed');
+    return data.result;
 }
 
 export async function dbRunQuery(projectId, query) {
